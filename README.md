@@ -37,7 +37,7 @@ export GEMINI_API_KEY="your-api-key-here"
 
 Run the script:
 ```bash
-python ipo_alert.py
+python main.py
 ```
 
 ### Output Format
