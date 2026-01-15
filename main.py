@@ -106,9 +106,9 @@ def main():
         print("[ERROR] No valid IPO data received")
         return
 
-    if not is_safe_to_send_email():
-        print("[INFO] Not a valid time to send email. Skipping.")
-        return
+    # if not is_safe_to_send_email():
+    #     print("[INFO] Not a valid time to send email. Skipping.")
+    #     return
 
     week_range = ipo_data.get("week", "Upcoming Week")
     subject = f"📈 Weekly IPO Alert ({week_range})"
