@@ -59,7 +59,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Explicitly install the correct package to avoid conflicts
+          pip install google-genai python-dotenv
+          # Install other requirements if they exist
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run Weekly IPO Alert
         env:

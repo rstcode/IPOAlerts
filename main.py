@@ -1,5 +1,5 @@
 """
-IPO Alert Generator using Google Gemini API
+        IPO Alert Generator using Google Gemini API
 Fetches Indian IPO data and generates summarized reports
 """
 
@@ -9,6 +9,8 @@ from typing import Dict
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
+
+# Assuming emaillib.py is in the same directory
 from emaillib import send_ipo_email
 
 # Load environment variables (.env for local, Secrets for GitHub)
@@ -21,6 +23,7 @@ def setup_gemini() -> bool:
     if not api_key:
         print("[ERROR] GEMINI_API_KEY is not set")
         return False
+    
     return True
 
 
