@@ -5,47 +5,44 @@ Fetches Indian IPO data and generates summarized reports
 
 import os
 import json
-from typing import Union, Dict
+from typing import Dict
+from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
-# Assuming emaillib.py is in the same directory
 from emaillib import send_ipo_email
 
-# Load environment variables from .env file
+# Load environment variables (.env for local, Secrets for GitHub)
 load_dotenv()
 
+
 def setup_gemini() -> bool:
-    """Configure Google Gemini API with API key from environment variable"""
+    """Validate Gemini API key availability"""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("[WARNING] GEMINI_API_KEY environment variable is not set")
+        print("[ERROR] GEMINI_API_KEY is not set")
         return False
     return True
 
+
 def generate_ipo_summary() -> str:
-    """
-    Generate a summarized IPO report using Google Gemini API
-    Returns: Raw JSON string response from Gemini
-    """
-    
-    # Load the prompt from external file
+    """Call Gemini API and return raw response text"""
+
+    prompt_path = os.path.join(os.path.dirname(__file__), "ipo_prompt.txt")
+
     try:
-        prompt_path = os.path.join(os.path.dirname(__file__), "ipo_prompt.txt")
-        with open(prompt_path, "r") as f:
+        with open(prompt_path, "r", encoding="utf-8") as f:
             prompt_template = f.read()
     except FileNotFoundError:
-        print("[ERROR] ipo_prompt.txt not found.")
+        print("[ERROR] ipo_prompt.txt not found")
         return "{}"
 
-    # Call Gemini API
-    # Note: For real-time data, ensure your model has access to Search or you provide context
+    print("[INFO] Calling Gemini API...")
+
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    
-    print("[INFO] Sending request to Gemini API...")
+
     try:
-        # Using a standard model that handles JSON well
         response = client.models.generate_content(
-            model="gemini-3-flash-preview", 
+            model="gemini-3-flash-preview",
             contents=prompt_template
         )
         return response.text
@@ -53,62 +50,77 @@ def generate_ipo_summary() -> str:
         print(f"[ERROR] Gemini API call failed: {e}")
         return "{}"
 
+
 def clean_and_parse_json(raw_text: str) -> Dict:
-    """
-    Cleans markdown formatting from Gemini response and parses JSON
-    """
+    """Strip markdown and safely parse JSON"""
+
     if not raw_text:
         return {}
 
-    # Remove markdown code blocks if present
     clean_text = raw_text.strip()
-    if clean_text.startswith("```json"):
-        clean_text = clean_text[7:]
+
+    # Remove markdown code blocks if Gemini adds them
     if clean_text.startswith("```"):
-        clean_text = clean_text[3:]
-    if clean_text.endswith("```"):
-        clean_text = clean_text[:-3]
-        
+        clean_text = clean_text.replace("```json", "").replace("```", "").strip()
+
     try:
-        return json.loads(clean_text.strip())
+        return json.loads(clean_text)
     except json.JSONDecodeError as e:
-        print(f"[ERROR] Failed to parse JSON: {e}")
-        print(f"[DEBUG] Raw text was: {raw_text}")
+        print("[ERROR] JSON parsing failed")
+        print("[DEBUG RAW OUTPUT]")
+        print(raw_text)
         return {}
 
+
+def is_safe_to_send_email() -> bool:
+    """
+    Prevent spam:
+    - Allow emails on manual runs
+    - Allow emails only on Monday for scheduled runs
+    """
+    event = os.getenv("GITHUB_EVENT_NAME")
+
+    if not event:
+        # Local run
+        return True
+
+    if event == "schedule":
+        return datetime.utcnow().weekday() == 0  # Monday
+
+    if event == "workflow_dispatch":
+        return True
+
+    return False
+
+
 def main():
-    """Main function to generate alert and send email"""
-    
-    # 1. Setup
+    print("[INFO] Starting Weekly IPO Alert")
+
     if not setup_gemini():
         return
 
-    # 2. Generate Content
     raw_summary = generate_ipo_summary()
-    
-    # 3. Parse JSON
-    print("[INFO] Parsing Gemini response...")
     ipo_data = clean_and_parse_json(raw_summary)
-    
+
     if not ipo_data:
-        print("[ERROR] No valid IPO data found to send.")
+        print("[ERROR] No valid IPO data received")
         return
 
-    # 4. Check if there are IPOs to report (Optional logic)
-    # If the list is empty, you might still want to send a "No IPOs this week" email
-    # which your template handles automatically.
-    
-    # 5. Send Email
-    print("[INFO] Formatting and sending email...")
+    if not is_safe_to_send_email():
+        print("[INFO] Not a valid time to send email. Skipping.")
+        return
+
     week_range = ipo_data.get("week", "Upcoming Week")
-    subject = f"📈 IPO Alerts: Weekly Summary ({week_range})"
-    
+    subject = f"📈 Weekly IPO Alert ({week_range})"
+
+    print("[INFO] Sending email...")
     success = send_ipo_email(ipo_data, subject=subject)
-    
+
     if success:
-        print("✅ Process completed successfully.")
+        print("✅ Weekly IPO Alert completed successfully")
     else:
-        print("❌ Process finished with email errors.")
+        print("❌ Email sending failed")
+
 
 if __name__ == "__main__":
     main()
