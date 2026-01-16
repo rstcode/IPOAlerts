@@ -6,7 +6,7 @@ Fetches Indian IPO data and generates summarized reports
 import os
 import json
 from typing import Dict
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from dotenv import load_dotenv
 from google import genai
 
@@ -27,7 +27,7 @@ def setup_gemini() -> bool:
     return True
 
 
-def generate_ipo_summary() -> str:
+def generate_ipo_summary(week_range: str | None = None) -> str:
     """Call Gemini API and return raw response text"""
 
     prompt_path = os.path.join(os.path.dirname(__file__), "ipo_prompt.txt")
@@ -41,12 +41,17 @@ def generate_ipo_summary() -> str:
 
     print("[INFO] Calling Gemini API...")
 
+    # Use safe replacement instead of str.format to avoid KeyError
+    # if the prompt template contains other braces (e.g., JSON blocks).
+    prompt = prompt_template.replace("{WEEK_RANGE}", week_range or "")
+
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     try:
+        
         response = client.models.generate_content(
             model="gemini-3-flash-preview",
-            contents=prompt_template
+            contents=prompt
         )
         return response.text
     except Exception as e:
@@ -101,8 +106,15 @@ def main():
 
     if not setup_gemini():
         return
+    
+    # Compute current week (Monday to Sunday) and format as YYYY-MM-DD to YYYY-MM-DD
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    dynamic_week = f"{monday.isoformat()} to {sunday.isoformat()}"
 
-    raw_summary = generate_ipo_summary()
+    raw_summary = generate_ipo_summary(week_range=dynamic_week)
+    
     ipo_data = clean_and_parse_json(raw_summary)
 
     if not ipo_data:
