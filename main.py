@@ -1,140 +1,160 @@
-"""
-        IPO Alert Generator using Google Gemini API
-Fetches Indian IPO data and generates summarized reports
-"""
-
 import os
 import json
-from typing import Dict
-from datetime import date, datetime, timedelta
-from dotenv import load_dotenv
-from google import genai
-
-# Assuming emaillib.py is in the same directory
+import requests
+from datetime import datetime, timedelta
 from emaillib import send_ipo_email
+from telegram_alert import send_telegram_message, format_telegram_message
+from dotenv import load_dotenv
 
-# Load environment variables (.env for local, Secrets for GitHub)
+
 load_dotenv()
 
+GMP_API_URL = "https://webnodejs.investorgain.com/cloud/ipodashboard/gmpList-read/IPO"
 
-def setup_gemini() -> bool:
-    """Validate Gemini API key availability"""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("[ERROR] GEMINI_API_KEY is not set")
+GMP_THRESHOLD = 02.0
+ALERT_HISTORY_FILE = "sent_alerts.json"
+IS_DEBUG = os.getenv("IS_DEBUG", "false").lower() in ("1", "true", "yes")
+
+
+def is_weekday_ist() -> bool:
+    return datetime.utcnow().weekday() < 5
+
+
+def load_alert_history():
+    if not os.path.exists(ALERT_HISTORY_FILE):
+        return {}
+    with open(ALERT_HISTORY_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_alert_history(history):
+    with open(ALERT_HISTORY_FILE, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def fetch_gmp_data():
+
+    use_mock = os.getenv("USE_MOCK", "false").lower() in ("1", "true", "yes")
+
+    if use_mock:
+        mock_path = os.path.join(os.path.dirname(__file__), "mockdata.json")
+        if not os.path.exists(mock_path):
+            print("[ERROR] USE_MOCK is true but mockdata.json not found")
+            return []
+        try:
+            with open(mock_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data.get("ipoList", [])
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            print(f"[ERROR] Failed to read mockdata.json: {e}")
+            return []
+    try:
+        response = requests.get(GMP_API_URL, timeout=15)
+        response.raise_for_status()
+        return response.json().get("ipoList", [])
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch GMP data: {e}")
+        return []
+
+
+def is_valid_ipo(ipo):
+    return ipo.get("ipo_status") in ["Upcoming", "Open"]
+
+
+def gmp_above_threshold(ipo):
+    try:
+        return float(ipo.get("gmp_percent_calc", 0)) >= GMP_THRESHOLD
+    except ValueError:
         return False
-    
+
+
+def should_alert(ipo, alert_history):
+    name = ipo.get("company_short_name")
+    if not name:
+        return False
+
+    if name in alert_history:
+        last_alert = datetime.fromisoformat(alert_history[name])
+        if datetime.utcnow() - last_alert < timedelta(days=5):
+            return False
+
     return True
 
 
-def generate_ipo_summary(week_range: str | None = None) -> str:
-    """Call Gemini API and return raw response text"""
+def transform_to_email_schema(ipos):
+    today = datetime.utcnow().date().isoformat()
 
-    prompt_path = os.path.join(os.path.dirname(__file__), "ipo_prompt.txt")
-
-    try:
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            prompt_template = f.read()
-    except FileNotFoundError:
-        print("[ERROR] ipo_prompt.txt not found")
-        return "{}"
-
-    print("[INFO] Calling Gemini API...")
-
-    # Use safe replacement instead of str.format to avoid KeyError
-    # if the prompt template contains other braces (e.g., JSON blocks).
-    prompt = prompt_template.replace("{WEEK_RANGE}", week_range or "")
-
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-    try:
-        
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        print(f"[ERROR] Gemini API call failed: {e}")
-        return "{}"
-
-
-def clean_and_parse_json(raw_text: str) -> Dict:
-    """Strip markdown and safely parse JSON"""
-
-    if not raw_text:
-        return {}
-
-    clean_text = raw_text.strip()
-
-    # Remove markdown code blocks if Gemini adds them
-    if clean_text.startswith("```"):
-        clean_text = clean_text.replace("```json", "").replace("```", "").strip()
-
-    try:
-        return json.loads(clean_text)
-    except json.JSONDecodeError as e:
-        print("[ERROR] JSON parsing failed")
-        print("[DEBUG RAW OUTPUT]")
-        print(raw_text)
-        return {}
-
-
-def is_safe_to_send_email() -> bool:
-    """
-    Prevent spam:
-    - Allow emails on manual runs
-    - Allow emails only on Monday for scheduled runs
-    """
-    event = os.getenv("GITHUB_EVENT_NAME")
-
-    if not event:
-        # Local run
-        return True
-
-    if event == "schedule":
-        return datetime.utcnow().weekday() == 0  # Monday
-
-    if event == "workflow_dispatch":
-        return True
-
-    return False
+    return {
+        "model": "InvestorGain GMP API",
+        "week": today,
+        "ipos": [
+            {
+                "company_name": ipo["company_short_name"],
+                "open_date": ipo["issue_open_dt"][:10],
+                "close_date": ipo["issue_end_dt"][:10],
+                "price_band": f"₹{ipo.get('ipo_price', 'N/A')}",
+                "sector": "N/A",
+                "gmp": f"{ipo.get('gmp')} ({ipo.get('gmp_percent_calc')}%)",
+                "subscription": {
+                    "retail": "N/A",
+                    "qib": "N/A",
+                    "overall": "N/A"
+                },
+                "demand_level": "Strong",
+                "risk_level": "High",
+                "suitable_for": ["Listing gains"]
+            }
+            for ipo in ipos
+        ]
+    }
 
 
 def main():
-    print("[INFO] Starting Weekly IPO Alert")
+    print("[INFO] Daily High GMP IPO Alert started")
 
-    if not setup_gemini():
-        return
-    
-    # Compute current week (Monday to Sunday) and format as YYYY-MM-DD to YYYY-MM-DD
-    today = date.today()
-    monday = today - timedelta(days=today.weekday())
-    sunday = monday + timedelta(days=6)
-    dynamic_week = f"{monday.isoformat()} to {sunday.isoformat()}"
-
-    raw_summary = generate_ipo_summary(week_range=dynamic_week)
-    
-    ipo_data = clean_and_parse_json(raw_summary)
-
-    if not ipo_data:
-        print("[ERROR] No valid IPO data received")
+    if not is_weekday_ist() and not IS_DEBUG:
+        print("[INFO] Weekend. Exiting.")
         return
 
-    # if not is_safe_to_send_email():
-    #     print("[INFO] Not a valid time to send email. Skipping.")
-    #     return
+    ipo_list = fetch_gmp_data()
+    alert_history = load_alert_history()
 
-    week_range = ipo_data.get("week", "Upcoming Week")
-    subject = f"📈 Weekly IPO Alert ({week_range})"
+    filtered = []
 
-    print("[INFO] Sending email...")
-    success = send_ipo_email(ipo_data, subject=subject)
+    for ipo in ipo_list:
+        if not is_valid_ipo(ipo):
+            continue
+        if not gmp_above_threshold(ipo):
+            continue
+        if not should_alert(ipo, alert_history):
+            print(f"[INFO] Alert already sent recently for {ipo['company_short_name']}. Skipping.")
+            #continue
 
-    if success:
-        print("✅ Weekly IPO Alert completed successfully")
+        filtered.append(ipo)
+
+    if not filtered:
+        print("[INFO] No IPOs with GMP > 20%. No email sent.")
+        return
+
+    # email_data = transform_to_email_schema(filtered)
+    # subject = f"🚀 High GMP IPO Alert (>20%) – {datetime.utcnow().date()}"
+    # email_sent  = send_ipo_email(email_data, subject=subject)
+
+    # Send Telegram
+    telegram_message = format_telegram_message(filtered)
+    telegram_sent = send_telegram_message(telegram_message)
+
+
+    if telegram_sent:
+        for ipo in filtered:
+            alert_history[ipo["company_short_name"]] = datetime.utcnow().isoformat()
+        save_alert_history(alert_history)
+        print("✅ Alerts sent successfully")
     else:
-        print("❌ Email sending failed")
+        print("❌ Failed to send alerts")
 
 
 if __name__ == "__main__":
