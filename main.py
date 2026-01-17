@@ -11,7 +11,7 @@ load_dotenv()
 
 GMP_API_URL = "https://webnodejs.investorgain.com/cloud/ipodashboard/gmpList-read/IPO"
 
-GMP_THRESHOLD = 02.0
+GMP_THRESHOLD = 10.0
 ALERT_HISTORY_FILE = "sent_alerts.json"
 IS_DEBUG = os.getenv("IS_DEBUG", "false").lower() in ("1", "true", "yes")
 
