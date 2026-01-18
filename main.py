@@ -1,23 +1,29 @@
 import os
 import json
 import requests
-from datetime import datetime, timedelta
-from emaillib import send_ipo_email
-from telegram_alert import send_telegram_message, format_telegram_message
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-
+from telegram_alert import send_telegram_message, format_telegram_message
 
 load_dotenv()
 
 GMP_API_URL = "https://webnodejs.investorgain.com/cloud/ipodashboard/gmpList-read/IPO"
 
-GMP_THRESHOLD = 10.0
+GMP_THRESHOLD = 20.0
+
 ALERT_HISTORY_FILE = "sent_alerts.json"
 IS_DEBUG = os.getenv("IS_DEBUG", "false").lower() in ("1", "true", "yes")
+IS_MOCK = os.getenv("IS_MOCK", "false").lower() in ("1", "true", "yes")
 
+
+# ------------------ Helpers ------------------
 
 def is_weekday_ist() -> bool:
-    return datetime.utcnow().weekday() < 5
+    return datetime.now(timezone.utc).weekday() < 5
+
+
+def parse_date(date_str):
+    return datetime.fromisoformat(date_str[:10]).date()
 
 
 def load_alert_history():
@@ -34,12 +40,10 @@ def save_alert_history(history):
 
 def fetch_gmp_data():
 
-    use_mock = os.getenv("USE_MOCK", "false").lower() in ("1", "true", "yes")
-
-    if use_mock:
+    if IS_MOCK:
         mock_path = os.path.join(os.path.dirname(__file__), "mockdata.json")
         if not os.path.exists(mock_path):
-            print("[ERROR] USE_MOCK is true but mockdata.json not found")
+            print("[ERROR] IS_MOCK is true but mockdata.json not found")
             return []
         try:
             with open(mock_path, "r", encoding="utf-8") as f:
@@ -71,90 +75,109 @@ def gmp_above_threshold(ipo):
         return False
 
 
-def should_alert(ipo, alert_history):
-    name = ipo.get("company_short_name")
-    if not name:
-        return False
+# ------------------ Momentum + Dedup ------------------
 
-    if name in alert_history:
-        last_alert = datetime.fromisoformat(alert_history[name])
-        if datetime.utcnow() - last_alert < timedelta(days=5):
-            return False
+def should_alert(ipo):
+    today = datetime.now(timezone.utc).date()
+    status = ipo.get("ipo_status")
 
-    return True
+    open_date = datetime.fromisoformat(ipo["issue_open_dt"][:10]).date()
+
+    # IPO is already open
+    if status == "Open":
+        return True
+
+    # IPO is upcoming within next 7 days
+    if status == "Upcoming" and open_date <= today + timedelta(days=7):
+        return True
+
+    return False
 
 
-def transform_to_email_schema(ipos):
-    today = datetime.utcnow().date().isoformat()
 
-    return {
-        "model": "InvestorGain GMP API",
-        "week": today,
-        "ipos": [
-            {
-                "company_name": ipo["company_short_name"],
-                "open_date": ipo["issue_open_dt"][:10],
-                "close_date": ipo["issue_end_dt"][:10],
-                "price_band": f"₹{ipo.get('ipo_price', 'N/A')}",
-                "sector": "N/A",
-                "gmp": f"{ipo.get('gmp')} ({ipo.get('gmp_percent_calc')}%)",
-                "subscription": {
-                    "retail": "N/A",
-                    "qib": "N/A",
-                    "overall": "N/A"
-                },
-                "demand_level": "Strong",
-                "risk_level": "High",
-                "suitable_for": ["Listing gains"]
-            }
-            for ipo in ipos
-        ]
+# ------------------ Categorisation ------------------
+
+def categorise_ipos(ipos):
+    today = datetime.now(timezone.utc).date()
+    next_7_days = today + timedelta(days=7)
+
+    categories = {
+        "last_day": [],
+        "open_now": [],
+        "upcoming": []
     }
 
+    for ipo in ipos:
+        open_date = parse_date(ipo["issue_open_dt"])
+        close_date = parse_date(ipo["issue_end_dt"])
+        status = ipo["ipo_status"]
+
+        if status == "Open":
+            if close_date == today:
+                categories["last_day"].append(ipo)
+            elif close_date > today:
+                categories["open_now"].append(ipo)
+
+        elif status == "Upcoming" and open_date <= next_7_days:
+            categories["upcoming"].append(ipo)
+
+    return categories
+
+
+def sort_by_priority(ipos, history):
+    def score(ipo):
+        gmp = float(ipo.get("gmp_percent_calc", 0))
+        trending_bonus = 0.0
+        return trending_bonus + gmp
+
+    return sorted(ipos, key=score, reverse=True)
+
+
+# ------------------ MAIN ------------------
 
 def main():
-    print("[INFO] Daily High GMP IPO Alert started")
+    print("[INFO] High GMP IPO Alert started")
 
     if not is_weekday_ist() and not IS_DEBUG:
         print("[INFO] Weekend. Exiting.")
         return
 
     ipo_list = fetch_gmp_data()
-    alert_history = load_alert_history()
+    history = load_alert_history()
 
-    filtered = []
+    eligible = []
 
     for ipo in ipo_list:
         if not is_valid_ipo(ipo):
             continue
         if not gmp_above_threshold(ipo):
             continue
-        if not should_alert(ipo, alert_history):
-            print(f"[INFO] Alert already sent recently for {ipo['company_short_name']}. Skipping.")
-            #continue
+        if not should_alert(ipo):
+            continue
+        eligible.append(ipo)
 
-        filtered.append(ipo)
-
-    if not filtered:
-        print("[INFO] No IPOs with GMP > 20%. No email sent.")
+    if not eligible:
+        print("[INFO] No qualifying IPOs today.")
         return
 
-    # email_data = transform_to_email_schema(filtered)
-    # subject = f"🚀 High GMP IPO Alert (>20%) – {datetime.utcnow().date()}"
-    # email_sent  = send_ipo_email(email_data, subject=subject)
+    categories = categorise_ipos(eligible)
 
-    # Send Telegram
-    telegram_message = format_telegram_message(filtered)
-    telegram_sent = send_telegram_message(telegram_message)
+    for key in categories:
+        categories[key] = sort_by_priority(categories[key], history)
 
+    message = format_telegram_message(categories, history)
 
-    if telegram_sent:
-        for ipo in filtered:
-            alert_history[ipo["company_short_name"]] = datetime.utcnow().isoformat()
-        save_alert_history(alert_history)
-        print("✅ Alerts sent successfully")
+    if send_telegram_message(message):
+        today = datetime.now(timezone.utc).date().isoformat()
+        for ipo in eligible:
+            history[ipo["company_short_name"]] = {
+                "last_alert_date": today,
+                "last_gmp_percent": float(ipo.get("gmp_percent_calc", 0))
+            }
+        save_alert_history(history)
+        print("✅ Telegram alert sent")
     else:
-        print("❌ Failed to send alerts")
+        print("❌ Telegram send failed")
 
 
 if __name__ == "__main__":

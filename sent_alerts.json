@@ -1,4 +1,22 @@
 {
-  "Shadowfax Technologies": "2026-01-17T16:40:19.152300",
-  "Amagi Media Labs": "2026-01-17T16:40:19.152508"
+  "Shadowfax": {
+    "last_alert_date": "2026-01-15",
+    "last_gmp_percent": 21.4
+  },
+  "Shadowfax Technologies": {
+    "last_alert_date": "2026-01-18",
+    "last_gmp_percent": 32.1
+  },
+  "Shadowfax Technologies2": {
+    "last_alert_date": "2026-01-18",
+    "last_gmp_percent": 33.1
+  },
+  "Amagi Media Labs": {
+    "last_alert_date": "2026-01-18",
+    "last_gmp_percent": 37.2
+  },
+  "Amagi Media Labs2": {
+    "last_alert_date": "2026-01-18",
+    "last_gmp_percent": 39.2
+  }
 }

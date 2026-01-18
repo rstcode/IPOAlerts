@@ -1,6 +1,8 @@
-from datetime import datetime
-import requests
 import os
+import requests
+from datetime import datetime, timezone
+
+# ------------------ Telegram Sender ------------------
 
 def send_telegram_message(message: str) -> bool:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -14,56 +16,88 @@ def send_telegram_message(message: str) -> bool:
     payload = {
         "chat_id": chat_id,
         "text": message,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
 
     response = requests.post(url, json=payload, timeout=10)
+    return response.status_code == 200
 
-    if response.status_code == 200:
-        print("✅ Telegram message sent")
-        return True
-    else:
-        print("❌ Telegram send failed:", response.text)
-        return False
+
+# ------------------ Formatting ------------------
 
 def get_gmp_badge(gmp_percent: float):
     if gmp_percent >= 50:
-        return "🔥 Extremely Hot"
+        return "🔥"
     elif gmp_percent >= 30:
-        return "⚡ Very Strong"
+        return "⚡"
     else:
-        return "✅ Strong"
+        return "✅"
 
 
-def format_telegram_message(ipos):
-    from datetime import datetime
+def format_short_date(date_str: str) -> str:
+    """Convert ISO date like '2026-01-13' or full datetime to '13 Jan'."""
+    if not date_str:
+        return "N/A"
+    try:
+        # Accept 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS' etc.
+        date_part = date_str.split("T")[0]
+        d = datetime.fromisoformat(date_part)
+        return d.strftime("%d %b")
+    except Exception:
+        # Fallback: try to slice YYYY-MM-DD
+        try:
+            return date_str[:10].replace("-", " ")
+        except Exception:
+            return date_str
 
-    today = datetime.utcnow().strftime("%d %b %Y")
+
+def format_telegram_message(categories, history):
+    today = datetime.now(timezone.utc).strftime("%d %b %Y")
 
     msg = (
-        "🚀 <b>High GMP IPO Alert</b>\n\n"
+        "🚀 <b>High GMP IPO Alert</b>\n"
         f"📅 <b>{today}</b>\n\n"
     )
 
-    for ipo in ipos:
-        try:
-            gmp_percent = float(ipo.get("gmp_percent_calc", 0))
-        except ValueError:
-            continue
+    def render(title, ipos):
+        nonlocal msg
+        if not ipos:
+            return
 
-        badge = get_gmp_badge(gmp_percent)
+        msg += f"<b>{title}:</b>\n"
+        for index, ipo in enumerate(ipos,1):
+            name = ipo["company_short_name"]
+            gmp = float(ipo.get("gmp_percent_calc", 0))
+            badge = get_gmp_badge(gmp)
 
-        msg += (
-            f"{badge}\n"
-            f"🔹 <b>{ipo['company_short_name']}</b>\n"
-            f"• Open: {ipo['issue_open_dt'][:10]} | Close: {ipo['issue_end_dt'][:10]}\n"
-            f"• IPO Price: ₹{ipo.get('ipo_price', 'N/A')}\n"
-            f"• GMP: ₹{ipo.get('gmp')} ({gmp_percent}%)\n\n"
-        )
+            # ---- GMP variation logic ----
+            variation_text = ""
+            if name in history:
+                last_gmp = history[name].get("last_gmp_percent", gmp)
+                diff = round(gmp - last_gmp, 1)
 
-    msg += (
-        "ℹ️ <i>GMP is unofficial and can change daily.</i>\n"
-        "<i>For informational purposes only.</i>"
-    )
+                if diff > 0:
+                    variation_text = f"{last_gmp}% |  📈 +{diff} 🚀"
+                elif diff < 0:
+                    variation_text = f"{last_gmp}% |  📉 {diff} 🔻"
+                else:
+                    variation_text = f"{last_gmp}% |   ➖ 0 No Change"
+
+            msg += (                
+                f"<b>{index}). {name}</b>\n"
+                f"• Open: {format_short_date(ipo.get('issue_open_dt'))}\n"
+                f"• Close: {format_short_date(ipo.get('issue_end_dt'))}\n"
+                f"• IPO Price: ₹{ipo.get('ipo_price', 'N/A')}\n"
+                f"• GMP: <b>{gmp}%</b> {badge} | ₹{ipo.get('gmp')}\n"
+                f"• LastDay GMP: {variation_text}\n\n"
+
+            )
+
+    render("🔴 LAST DAY (Closes Today)", categories["last_day"])
+    render("🟢 OPEN NOW", categories["open_now"])
+    render("🟡 UPCOMING (Next 7 Days)", categories["upcoming"])
+
+    msg += ("ℹ️ <i>For informational purposes only.</i>")
 
     return msg
