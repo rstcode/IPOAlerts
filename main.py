@@ -1,14 +1,16 @@
 import os
 import json
+import re
+from html import unescape
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
 from dotenv import load_dotenv
 from telegram_alert import send_telegram_message, format_telegram_message
 
 load_dotenv()
 
 GMP_API_URL = "https://webnodejs.investorgain.com/cloud/ipodashboard/gmpList-read/IPO"
-
+GMP_UI_URL = 'https://www.ipoguru.in/live-ipo-gmp'
 GMP_THRESHOLD = 20.0
 
 ALERT_HISTORY_FILE = "sent_alerts.json"
@@ -58,10 +60,149 @@ def fetch_gmp_data():
     try:
         response = requests.get(GMP_API_URL, timeout=15)
         response.raise_for_status()
-        return response.json().get("ipoList", [])
+        data = response.json().get("ipoList", [])
+        if data:
+            return data
+        print("[WARN] GMP API returned no ipoList, falling back to UI HTML parser")
     except Exception as e:
         print(f"[ERROR] Failed to fetch GMP data: {e}")
-        return []
+
+    html = fetch_gmp_from_ui_url()
+    if html:
+        return parse_gmp_html_to_json(html)
+    return []
+
+
+def fetch_gmp_from_ui_url():
+    try:
+        response = requests.get(GMP_UI_URL, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch GMP data from UI URL: {e}")
+        return ""
+
+
+def _extract_text(html: str) -> str:
+    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.S | re.I)
+    text = re.sub(r'<[^>]+>', '', text)
+    return unescape(text).strip()
+
+
+def _parse_amount(text: str) -> str:
+    if not text:
+        return ""
+    text = unescape(text)
+    text = text.replace("₹", "").replace("Rs", "").replace("INR", "")
+    text = text.strip().replace("\xa0", " ")
+    text = re.sub(r'[\s,]+', '', text)
+    return "" if text in ("-", "–", "—", "") else text
+
+
+def _parse_day_month(value: str, reference: date) -> date | None:
+    value = value.strip()
+    match = re.match(r'^(\d{1,2})\s+([A-Za-z]{3})$', value)
+    if not match:
+        return None
+    day = int(match.group(1))
+    month_str = match.group(2).title()
+    try:
+        month = datetime.strptime(month_str, "%b").month
+    except ValueError:
+        return None
+
+    year = reference.year
+    if month < reference.month - 6:
+        year += 1
+    elif month > reference.month + 6:
+        year -= 1
+
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _parse_date_range(text: str) -> tuple[str, str] | tuple[None, None]:
+    parts = [part.strip() for part in text.split("-") if part.strip()]
+    if len(parts) != 2:
+        return None, None
+
+    today = datetime.now(timezone.utc).date()
+    start = _parse_day_month(parts[0], today)
+    end = _parse_day_month(parts[1], today)
+    if not start or not end:
+        return None, None
+
+    if end < start:
+        end = date(start.year + 1, end.month, end.day)
+
+    return start.isoformat() + "T00:00:00.000Z", end.isoformat() + "T00:00:00.000Z"
+
+
+def _infer_ipo_status(open_date: str, close_date: str) -> str:
+    try:
+        start = datetime.fromisoformat(open_date[:10]).date()
+        end = datetime.fromisoformat(close_date[:10]).date()
+    except Exception:
+        return "Upcoming"
+
+    today = datetime.now(timezone.utc).date()
+    if start <= today <= end:
+        return "Open"
+    if end < today:
+        return "Closed"
+    return "Upcoming"
+
+
+def _is_mainboard_ipo(company_html: str) -> bool:
+    spans = re.findall(r'<span[^>]*>(.*?)</span>', company_html, flags=re.S | re.I)
+    for span in spans:
+        if _extract_text(span).strip().lower() == "mainboard":
+            return True
+    return False
+
+
+def parse_gmp_html_to_json(html: str) -> list:
+    rows = re.findall(r'<tr[^>]*\bid="ipo-[^"]*"[^>]*>(.*?)</tr>', html, flags=re.S | re.I)
+    parsed = []
+
+    for row in rows:
+        cells = re.findall(r'<td[^>]*>(.*?)</td>', row, flags=re.S | re.I)
+        if len(cells) < 5:
+            continue
+
+        company_html = cells[0]
+        if not _is_mainboard_ipo(company_html):
+            continue
+
+        issue_price_html = cells[1]
+        gmp_html = cells[2]
+        gmp_pct_html = cells[3]
+
+        company_name_match = re.search(r'<a[^>]*>(.*?)</a>', company_html, flags=re.S | re.I)
+        company = _extract_text(company_name_match.group(1)) if company_name_match else _extract_text(company_html)
+
+        date_match = re.search(r'([0-9]{1,2}\s+[A-Za-z]{3}\s*-\s*[0-9]{1,2}\s+[A-Za-z]{3})', company_html)
+        open_dt, end_dt = _parse_date_range(date_match.group(1)) if date_match else (None, None)
+
+        issue_price = _parse_amount(_extract_text(issue_price_html))
+        gmp_amount = _parse_amount(_extract_text(gmp_html))
+        gmp_percent = _extract_text(gmp_pct_html).replace("%", "").strip()
+        if gmp_percent in ("", "--"):
+            gmp_percent = "0"
+
+        parsed.append({
+            "company_short_name": company,
+            "issue_open_dt": open_dt or f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00.000Z",
+            "issue_end_dt": end_dt or f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00.000Z",
+            "ipo_status": _infer_ipo_status(open_dt or "", end_dt or ""),
+            "gmp": gmp_amount,
+            "gmp_percent_calc": gmp_percent,
+            "ipo_price": issue_price,
+        })
+
+    return parsed
 
 
 def is_valid_ipo(ipo):
@@ -140,7 +281,7 @@ def main():
 
     if not is_weekday_ist() and not IS_DEBUG:
         print("[INFO] Weekend. Exiting.")
-        return
+        #return
 
     ipo_list = fetch_gmp_data()
     history = load_alert_history()
