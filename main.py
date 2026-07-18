@@ -284,7 +284,9 @@ def main():
         #return
 
     ipo_list = fetch_gmp_data()
+    print(f"[INFO] Fetched {len(ipo_list)} IPOs from GMP API")
     history = load_alert_history()
+    print(f"[INFO] Loaded {len(history)} entries from alert history")
 
     eligible = []
 
