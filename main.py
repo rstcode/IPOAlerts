@@ -48,7 +48,7 @@ def normalize_gmp_payload(payload):
         normalized = []
         for section_key in ("MB", "SME"):
             section = payload.get(section_key)
-            if section_key is 'SME':
+            if section_key == "SME":
                 continue  # Skip SME section for now:
             if not isinstance(section, list):
                 continue
