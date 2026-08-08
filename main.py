@@ -9,7 +9,7 @@ from telegram_alert import send_telegram_message, format_telegram_message
 
 load_dotenv()
 
-GMP_API_URL = "https://webnodejs.investorgain.com/cloud/ipodashboard/gmpList-read/IPO"
+GMP_API_URL = "https://ipocentral.in/wp-json/ipo-gmp/v1/data"
 GMP_UI_URL = 'https://www.ipoguru.in/live-ipo-gmp'
 GMP_THRESHOLD = 20.0
 
@@ -40,6 +40,50 @@ def save_alert_history(history):
         json.dump(history, f, indent=2)
 
 
+def normalize_gmp_payload(payload):
+    if isinstance(payload, dict):
+        if isinstance(payload.get("ipoList"), list):
+            return payload["ipoList"]
+
+        normalized = []
+        for section_key in ("MB", "SME"):
+            section = payload.get(section_key)
+            if section_key is 'SME':
+                continue  # Skip SME section for now:
+            if not isinstance(section, list):
+                continue
+            for item in section:
+                if not isinstance(item, dict):
+                    continue
+
+                date_text = item.get("date") or ""
+                open_dt, end_dt = _parse_date_range(date_text)
+                gmp_amount = _parse_amount(str(item.get("num") or item.get("gmp") or ""))
+                gmp_percent = _parse_amount(str(item.get("pct") or item.get("gmpPercent") or ""))
+                if not gmp_percent and item.get("gmpText"):
+                    gmp_text = str(item.get("gmpText", ""))
+                    parts = re.findall(r"[-+]?\d+(?:\.\d+)?", gmp_text)
+                    if len(parts) >= 2:
+                        gmp_amount = _parse_amount(parts[0])
+                        gmp_percent = _parse_amount(parts[1])
+
+                normalized.append({
+                    "company_short_name": item.get("name") or "",
+                    "issue_open_dt": open_dt or f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00.000Z",
+                    "issue_end_dt": end_dt or f"{datetime.now(timezone.utc).date().isoformat()}T00:00:00.000Z",
+                    "ipo_status": _infer_ipo_status(open_dt or "", end_dt or ""),
+                    "gmp": gmp_amount,
+                    "gmp_percent_calc": gmp_percent or "0",
+                    "ipo_price": "",
+                })
+        return normalized
+
+    if isinstance(payload, list):
+        return payload
+
+    return []
+
+
 def fetch_gmp_data():
 
     if IS_MOCK:
@@ -50,20 +94,19 @@ def fetch_gmp_data():
         try:
             with open(mock_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, dict):
-                    return data.get("ipoList", [])
-                if isinstance(data, list):
-                    return data
+                return normalize_gmp_payload(data)
         except Exception as e:
             print(f"[ERROR] Failed to read mockdata.json: {e}")
             return []
     try:
-        response = requests.get(GMP_API_URL, timeout=15)
+        response = requests.get(GMP_API_URL, timeout=20)
         response.raise_for_status()
-        data = response.json().get("ipoList", [])
+        data = response.json()
         if data:
-            return data
-        print("[WARN] GMP API returned no ipoList, falling back to UI HTML parser")
+            normalized = normalize_gmp_payload(data)
+            if normalized:
+                return normalized
+        print("[WARN] GMP API returned no normalized IPOs, falling back to UI HTML parser")
     except Exception as e:
         print(f"[ERROR] Failed to fetch GMP data: {e}")
 
@@ -93,23 +136,29 @@ def _parse_amount(text: str) -> str:
     if not text:
         return ""
     text = unescape(text)
-    text = text.replace("₹", "").replace("Rs", "").replace("INR", "")
+    text = text.replace("₹", "").replace("Rs", "").replace("INR", "").replace("%", "")
     text = text.strip().replace("\xa0", " ")
     text = re.sub(r'[\s,]+', '', text)
     return "" if text in ("-", "–", "—", "") else text
 
 
-def _parse_day_month(value: str, reference: date) -> date | None:
+def _parse_day_month(value: str, reference: date, fallback_month: int | None = None) -> date | None:
     value = value.strip()
-    match = re.match(r'^(\d{1,2})\s+([A-Za-z]{3})$', value)
+    match = re.match(r'^(\d{1,2})(?:\s+([A-Za-z]{3}))?$', value)
     if not match:
         return None
     day = int(match.group(1))
-    month_str = match.group(2).title()
-    try:
-        month = datetime.strptime(month_str, "%b").month
-    except ValueError:
-        return None
+    month_str = match.group(2)
+
+    if month_str:
+        try:
+            month = datetime.strptime(month_str.title(), "%b").month
+        except ValueError:
+            return None
+    elif fallback_month is not None:
+        month = fallback_month
+    else:
+        month = reference.month
 
     year = reference.year
     if month < reference.month - 6:
@@ -124,13 +173,37 @@ def _parse_day_month(value: str, reference: date) -> date | None:
 
 
 def _parse_date_range(text: str) -> tuple[str, str] | tuple[None, None]:
-    parts = [part.strip() for part in text.split("-") if part.strip()]
+    if not text:
+        return None, None
+
+    cleaned = re.sub(r'[\(\)]', '', text)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    parts = [part.strip() for part in re.split(r'\s*-\s*', cleaned) if part.strip()]
     if len(parts) != 2:
         return None, None
 
     today = datetime.now(timezone.utc).date()
-    start = _parse_day_month(parts[0], today)
-    end = _parse_day_month(parts[1], today)
+    start_part, end_part = parts[0], parts[1]
+
+    start_month = None
+    end_month = None
+
+    start_month_match = re.search(r'([A-Za-z]{3})', start_part)
+    if start_month_match:
+        try:
+            start_month = datetime.strptime(start_month_match.group(1).title(), "%b").month
+        except ValueError:
+            start_month = None
+
+    end_month_match = re.search(r'([A-Za-z]{3})', end_part)
+    if end_month_match:
+        try:
+            end_month = datetime.strptime(end_month_match.group(1).title(), "%b").month
+        except ValueError:
+            end_month = None
+
+    start = _parse_day_month(start_part, today, fallback_month=end_month if start_month is None else None)
+    end = _parse_day_month(end_part, today, fallback_month=start_month if end_month is None else None)
     if not start or not end:
         return None, None
 
