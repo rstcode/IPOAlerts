@@ -16,6 +16,13 @@ GMP_THRESHOLD = 20.0
 ALERT_HISTORY_FILE = "sent_alerts.json"
 IS_DEBUG = os.getenv("IS_DEBUG", "false").lower() in ("1", "true", "yes")
 IS_MOCK = os.getenv("IS_MOCK", "false").lower() in ("1", "true", "yes")
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+    "X-Requested-With": "XMLHttpRequest",
+}
 
 
 # ------------------ Helpers ------------------
@@ -84,6 +91,23 @@ def normalize_gmp_payload(payload):
     return []
 
 
+def fetch_url(url: str, timeout: int = 20):
+    last_error = None
+    for attempt in range(2):
+        try:
+            response = requests.get(url, timeout=timeout, headers=REQUEST_HEADERS, allow_redirects=True)
+            if response.status_code < 400:
+                return response
+            last_error = RuntimeError(f"{response.status_code} {response.reason}")
+            if response.status_code in {403, 429} and attempt == 0:
+                print(f"[WARN] Retrying {url} after HTTP {response.status_code}")
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == 0:
+                print(f"[WARN] Request failed for {url}: {exc}")
+    raise last_error or RuntimeError(f"Failed to fetch {url}")
+
+
 def fetch_gmp_data():
 
     if IS_MOCK:
@@ -99,8 +123,7 @@ def fetch_gmp_data():
             print(f"[ERROR] Failed to read mockdata.json: {e}")
             return []
     try:
-        response = requests.get(GMP_API_URL, timeout=20)
-        response.raise_for_status()
+        response = fetch_url(GMP_API_URL, timeout=20)
         data = response.json()
         if data:
             normalized = normalize_gmp_payload(data)
@@ -118,8 +141,7 @@ def fetch_gmp_data():
 
 def fetch_gmp_from_ui_url():
     try:
-        response = requests.get(GMP_UI_URL, timeout=15)
-        response.raise_for_status()
+        response = fetch_url(GMP_UI_URL, timeout=20)
         return response.text
     except Exception as e:
         print(f"[ERROR] Failed to fetch GMP data from UI URL: {e}")
