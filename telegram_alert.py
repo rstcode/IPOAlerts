@@ -74,24 +74,28 @@ def format_telegram_message(categories, history):
             # ---- GMP variation logic ----
             variation_text = ""
             if name in history:
-                last_gmp = history[name].get("last_gmp_percent", gmp)
-                diff = round(gmp - last_gmp, 1)
-
-                if diff > 0:
-                    variation_text = f"{last_gmp}% |  📈 +{diff} 🚀"
-                elif diff < 0:
-                    variation_text = f"{last_gmp}% |  📉 {diff} 🔻"
+                prev_entry = history[name]
+                last_gmp = prev_entry.get("last_gmp_percent")
+                if last_gmp is None:
+                    variation_text = f"Yesterday → Today GMP: N/A → {gmp:.1f}%"
                 else:
-                    variation_text = f"{last_gmp}% |   ➖ 0 No Change"
+                    last_gmp = float(last_gmp)
+                    diff = round(gmp - last_gmp, 1)
+                    if diff > 0:
+                        variation_text = f"Yesterday → Today GMP: {last_gmp:.1f}% → {gmp:.1f}%"
+                    elif diff < 0:
+                        variation_text = f"Yesterday → Today GMP: {last_gmp:.1f}% → {gmp:.1f}%"
+                    else:
+                        variation_text = f"Yesterday → Today GMP: {last_gmp:.1f}% → {gmp:.1f}%"
+            else:
+                variation_text = f"Yesterday → Today GMP: N/A → {gmp:.1f}%"
 
-            msg += (                
+            msg += (
                 f"<b>{index}). {name}</b>\n"
                 f"• Open: {format_short_date(ipo.get('issue_open_dt'))}\n"
                 f"• Close: {format_short_date(ipo.get('issue_end_dt'))}\n"
-                f"• IPO Price: ₹{ipo.get('ipo_price', 'N/A')}\n"
                 f"• GMP: <b>{gmp}%</b> {badge} | ₹{ipo.get('gmp')}\n"
-                f"• LastDay GMP: {variation_text}\n\n"
-
+                f"• {variation_text}\n\n"
             )
 
     render("🔴 LAST DAY (Closes Today)", categories["last_day"])
