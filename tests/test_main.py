@@ -37,6 +37,7 @@ class NormalizeGmpPayloadTests(unittest.TestCase):
         self.assertEqual(parsed[0]["gmp"], "30")
         self.assertEqual(parsed[0]["gmp_percent_calc"], "11")
         self.assertEqual(parsed[0]["ipo_status"], "Upcoming")
+        self.assertEqual(parsed[0]["url"], "https://ipocentral.in/behari-lal-engineering-ipo-gmp-price-date-details/")
         self.assertEqual(parsed[0]["issue_open_dt"].startswith("2026"), False)
         self.assertEqual(parsed[0]["issue_end_dt"].startswith("2026"), False)
         self.assertEqual(parsed[1]["company_short_name"], "Optimystix Entertainment")

@@ -14,6 +14,7 @@ class FormatTelegramMessageTests(unittest.TestCase):
                     "ipo_price": "100",
                     "gmp": "100",
                     "gmp_percent_calc": "25",
+                    "url": "https://example.com/ipo",
                 }
             ],
             "open_now": [],
@@ -26,6 +27,7 @@ class FormatTelegramMessageTests(unittest.TestCase):
         self.assertIn("Yesterday → Today GMP", message)
         self.assertIn("23.0% → 25.0%", message)
         self.assertIn("+2.0%", message)
+        self.assertIn("https://example.com/ipo", message)
 
 
 if __name__ == "__main__":

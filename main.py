@@ -82,6 +82,7 @@ def normalize_gmp_payload(payload):
                     "gmp": gmp_amount,
                     "gmp_percent_calc": gmp_percent or "0",
                     "ipo_price": "",
+                    "url": item.get("url") or item.get("link") or item.get("ipo_url") or "",
                 })
         return normalized
 
@@ -278,6 +279,9 @@ def parse_gmp_html_to_json(html: str) -> list:
         company_name_match = re.search(r'<a[^>]*>(.*?)</a>', company_html, flags=re.S | re.I)
         company = _extract_text(company_name_match.group(1)) if company_name_match else _extract_text(company_html)
 
+        company_url_match = re.search(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>', company_html, flags=re.S | re.I)
+        company_url = company_url_match.group(1) if company_url_match else ""
+
         date_match = re.search(r'([0-9]{1,2}\s+[A-Za-z]{3}\s*-\s*[0-9]{1,2}\s+[A-Za-z]{3})', company_html)
         open_dt, end_dt = _parse_date_range(date_match.group(1)) if date_match else (None, None)
 
@@ -295,6 +299,7 @@ def parse_gmp_html_to_json(html: str) -> list:
             "gmp": gmp_amount,
             "gmp_percent_calc": gmp_percent,
             "ipo_price": issue_price,
+            "url": company_url,
         })
 
     return parsed

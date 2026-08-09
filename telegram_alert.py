@@ -90,18 +90,24 @@ def format_telegram_message(categories, history):
             else:
                 variation_text = f"Yesterday → Today GMP: N/A → {gmp:.1f}%"
 
+            link = ipo.get("url") or ipo.get("link") or ipo.get("ipo_url")
+            if link:
+                link_text = f"\n• Link: <a href=\"{link}\">IPO Info</a>"
+            else:
+                link_text = ""
+
             msg += (
                 f"<b>{index}). {name}</b>\n"
                 f"• Open: {format_short_date(ipo.get('issue_open_dt'))}\n"
                 f"• Close: {format_short_date(ipo.get('issue_end_dt'))}\n"
                 f"• GMP: <b>{gmp}%</b> {badge} | ₹{ipo.get('gmp')}\n"
-                f"• {variation_text}\n\n"
+                f"• {variation_text}{link_text}\n\n"
             )
 
     render("🔴 LAST DAY (Closes Today)", categories["last_day"])
     render("🟢 OPEN NOW", categories["open_now"])
     render("🟡 UPCOMING (Next 7 Days)", categories["upcoming"])
 
-    msg += ("ℹ️ <i>For informational purposes only.</i>")
+    msg += ("\t<i>  -rstcode.</i>")
 
     return msg
