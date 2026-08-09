@@ -69,7 +69,7 @@ def format_telegram_message(categories, history):
         for index, ipo in enumerate(ipos,1):
             name = ipo["company_short_name"]
             gmp = float(ipo.get("gmp_percent_calc", 0))
-            badge = get_gmp_badge(gmp)
+            #badge = get_gmp_badge(gmp)
 
             # ---- GMP variation logic ----
             variation_text = ""
@@ -100,7 +100,7 @@ def format_telegram_message(categories, history):
                 f"<b>{index}). {name}</b>\n"
                 f"• Open: {format_short_date(ipo.get('issue_open_dt'))}\n"
                 f"• Close: {format_short_date(ipo.get('issue_end_dt'))}\n"
-                f"• GMP: <b>{gmp}%</b> {badge} | ₹{ipo.get('gmp')}\n"
+                f"• GMP: <b>{gmp}%</b> | ₹{ipo.get('gmp')}\n"
                 f"• {variation_text}{link_text}\n\n"
             )
 
