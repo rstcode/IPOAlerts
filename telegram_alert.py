@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from datetime import datetime, timezone
 
@@ -111,3 +112,34 @@ def format_telegram_message(categories, history):
     msg += ("\t<i>  -rstcode.</i>")
 
     return msg
+
+
+def format_applicant_results_message(results, ipo_name: str) -> str:
+    """Format applicant allotment results into a Telegram-friendly message."""
+    total = len(results)
+    successful = sum(1 for r in results if r.get("Status") == "Success")
+    failed = total - successful
+
+    msg = f"📣 <b>{ipo_name} </b>📣\nIPO allotment status is out.\n"
+    msg += f"Total PAN's: {total} | Success: {successful} | Failed: {failed}\n\n"
+
+    for r in results:
+        pan = r.get("PAN")
+        status = r.get("Status")
+        if status == "Success":
+            name = r.get("Name") or "N/A"
+            name = re.sub(r'^(MR|MS)\.?\s+', '', name, flags=re.IGNORECASE)
+            shares = r.get("All_Shares") if r.get("All_Shares") is not None else r.get("App_Shares", "0")
+            msg += f"• {name}: <b>{shares} shares.</b>\n"
+
+    msg += "\n<i>This is an allotment status triggerd by rstcode.</i>\n"
+    return msg
+
+
+def send_applicant_results(results, ipo_name: str) -> bool:
+    """Format and send applicant results to Telegram using `send_telegram_message`.
+
+    Returns True if the Telegram API reported success.
+    """
+    message = format_applicant_results_message(results, ipo_name)
+    return send_telegram_message(message)

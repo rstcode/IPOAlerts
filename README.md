@@ -1,66 +1,50 @@
-# IPO Alert - Weekly Indian IPO Summary Generator
+# IPO Alerts
 
-A Python script that fetches Indian IPO data and generates concise, neutral summaries using Google Gemini API.
+A Python project that fetches Indian IPO GMP data, filters high-potential IPOs, and sends Telegram alerts with the latest GMP movement and IPO details.
 
-## Phase 1 (Current)
-- ✅ Gemini API integration (gemini-1.5-flash)
-- ✅ IPO summary generation with structured analysis
-- ✅ Mock IPO data support
-- ✅ Environment variable for API key
+## What it does
+- Fetches IPO GMP data from the live source
+- Filters IPOs above a configurable GMP threshold
+- Categorizes IPOs into:
+  - closing today
+  - open now
+  - upcoming in the next 7 days
+- Sends a formatted Telegram message
+- Saves previous alert values in sent_alerts.json for comparison
 
 ## Setup
 
 ### Prerequisites
 - Python 3.8+
-- Google Gemini API key
+- Telegram bot token and chat ID
 
-### Installation
-
-1. Install dependencies:
+### Install dependencies
 ```bash
 py -m pip install -r requirements.txt
 ```
 
-2. Set up your Gemini API key:
+### Environment variables
 ```bash
 # Windows (PowerShell)
-$env:GEMINI_API_KEY = "your-api-key-here"
+$env:TELEGRAM_BOT_TOKEN = "your-bot-token"
+$env:TELEGRAM_CHAT_ID = "your-chat-id"
 
-# Windows (Command Prompt)
-set GEMINI_API_KEY=your-api-key-here
-
-# Linux/Mac
-export GEMINI_API_KEY="your-api-key-here"
+# Optional
+$env:IS_DEBUG = "true"
+$env:IS_MOCK = "true"
 ```
 
-### Usage
-
-Run the script:
+### Run
 ```bash
 python main.py
 ```
 
-### Output Format
+## Project files
+- main.py: fetches data, filters IPOs, and sends alerts
+- telegram_alert.py: formats and sends the Telegram message
+- sent_alerts.json: stores prior alert GMP values for comparison
+- tests/: basic regression tests
 
-The script generates a neutral, plain-text IPO summary including:
-- Company details (name, sector)
-- Key dates (opening, closing, listing)
-- Price band and GMP
-- Subscription metrics (Retail, QIB, Overall)
-- Demand and risk assessment
-- Suitable investor types
-- Key observations
-
-## Function Reference
-
-### `setup_gemini()`
-Initializes Gemini API with credentials from `GEMINI_API_KEY` environment variable.
-
-### `generate_ipo_summary(ipo_data: Union[Dict, str]) -> str`
-Accepts IPO data as dict or JSON string, sends to Gemini, returns formatted summary.
-
-## Future Phases
-- [ ] Live IPO data fetching
-- [ ] WhatsApp/Email notifications
-- [ ] GitHub Actions weekly scheduler
-- [ ] GPT fallback option
+## Notes
+- The Telegram message includes the IPO name, dates, GMP, change from the last saved value, and a link when available.
+- Mock mode can be enabled for testing with sample data.
