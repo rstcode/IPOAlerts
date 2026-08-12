@@ -6,9 +6,6 @@ on:
       ipo_prefix:
         description: 'IPO name prefix (optional)'
         required: false
-      pan_list:
-        description: 'Comma-separated PANs (optional)'
-        required: false
 
 jobs:
   run-fetch:
