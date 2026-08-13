@@ -120,7 +120,7 @@ def format_applicant_results_message(results, ipo_name: str) -> str:
     successful = sum(1 for r in results if r.get("Status") == "Success")
     failed = total - successful
 
-    msg = f"📣 <b>{ipo_name} </b>📣\nIPO allotment status is out.\n"
+    msg = f"📣 <b>IPO allotment status</b>📣\n{ipo_name}.\n"
     msg += f"Total PAN's: {total} | Success: {successful} | Failed: {failed}\n\n"
 
     for r in results:
