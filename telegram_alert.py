@@ -109,7 +109,7 @@ def format_telegram_message(categories, history):
     render("🟢 OPEN NOW", categories["open_now"])
     render("🟡 UPCOMING (Next 7 Days)", categories["upcoming"])
     msg += ("\t<b>Note:</b> Double check before making any investment decisions.\n")
-    msg += ("\t<i>  -rstcode.</i>")
+    msg += ("\t<i>   -rstcode.</i>")
 
     return msg
 
